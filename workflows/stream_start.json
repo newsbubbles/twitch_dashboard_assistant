@@ -1,0 +1,105 @@
+{
+  "id": "stream_start_sequence",
+  "name": "Stream Start Sequence",
+  "description": "Automated sequence for starting a stream",
+  "initial_state": "set_starting_scene",
+  "states": [
+    {
+      "name": "set_starting_scene",
+      "description": "Switch to Starting Soon scene",
+      "action": {
+        "service": "obs",
+        "method": "set_current_scene",
+        "params": {
+          "scene_name": "Starting Soon"
+        }
+      },
+      "transitions": {
+        "success": "send_discord_notification",
+        "error": "handle_error"
+      },
+      "timeout_seconds": 10,
+      "on_timeout": "handle_error"
+    },
+    {
+      "name": "send_discord_notification",
+      "description": "Send going live notification to Discord",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Would send Discord notification here",
+          "level": "info"
+        }
+      },
+      "transitions": {
+        "success": "countdown_wait",
+        "error": "countdown_wait"
+      }
+    },
+    {
+      "name": "countdown_wait",
+      "description": "Wait for viewers to join",
+      "action": {
+        "service": "internal",
+        "method": "wait",
+        "params": {
+          "seconds": 10
+        }
+      },
+      "transitions": {
+        "success": "set_main_scene"
+      }
+    },
+    {
+      "name": "set_main_scene",
+      "description": "Switch to Main scene",
+      "action": {
+        "service": "obs",
+        "method": "set_current_scene",
+        "params": {
+          "scene_name": "Main"
+        }
+      },
+      "transitions": {
+        "success": "update_stream_info",
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "update_stream_info",
+      "description": "Update stream title and category",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Would update stream title and category here",
+          "level": "info"
+        }
+      },
+      "transitions": {
+        "success": null,
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "handle_error",
+      "description": "Handle any errors in the workflow",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Error occurred in stream start workflow",
+          "level": "error"
+        }
+      },
+      "transitions": {}
+    }
+  ],
+  "version": "1.0",
+  "author": "Dashboard Assistant",
+  "created_at": "2023-04-01T12:00:00Z",
+  "updated_at": "2023-04-01T12:00:00Z",
+  "tags": ["stream", "automation", "start"],
+  "triggers": ["stream_start"]
+}

@@ -1,0 +1,117 @@
+{
+  "id": "stream_end_sequence",
+  "name": "Stream End Sequence",
+  "description": "Automated sequence for ending a stream",
+  "initial_state": "create_stream_marker",
+  "states": [
+    {
+      "name": "create_stream_marker",
+      "description": "Create a stream marker for the end of content",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Would create stream marker here",
+          "level": "info"
+        }
+      },
+      "transitions": {
+        "success": "set_ending_scene",
+        "error": "set_ending_scene"
+      }
+    },
+    {
+      "name": "set_ending_scene",
+      "description": "Switch to Ending scene",
+      "action": {
+        "service": "obs",
+        "method": "set_current_scene",
+        "params": {
+          "scene_name": "Ending"
+        }
+      },
+      "transitions": {
+        "success": "send_chat_message",
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "send_chat_message",
+      "description": "Send thank you message to chat",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Would send thank you message to chat",
+          "level": "info"
+        }
+      },
+      "transitions": {
+        "success": "wait_for_goodbye",
+        "error": "wait_for_goodbye"
+      }
+    },
+    {
+      "name": "wait_for_goodbye",
+      "description": "Wait for goodbye message to be seen",
+      "action": {
+        "service": "internal",
+        "method": "wait",
+        "params": {
+          "seconds": 10
+        }
+      },
+      "transitions": {
+        "success": "stop_streaming"
+      }
+    },
+    {
+      "name": "stop_streaming",
+      "description": "Stop the stream",
+      "action": {
+        "service": "obs",
+        "method": "stop_streaming",
+        "params": {}
+      },
+      "transitions": {
+        "success": "post_stats",
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "post_stats",
+      "description": "Post stream stats to Discord",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Would post stream stats to Discord",
+          "level": "info"
+        }
+      },
+      "transitions": {
+        "success": null,
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "handle_error",
+      "description": "Handle any errors in the workflow",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Error occurred in stream end workflow",
+          "level": "error"
+        }
+      },
+      "transitions": {}
+    }
+  ],
+  "version": "1.0",
+  "author": "Dashboard Assistant",
+  "created_at": "2023-04-01T12:00:00Z",
+  "updated_at": "2023-04-01T12:00:00Z",
+  "tags": ["stream", "automation", "end"],
+  "triggers": ["stream_end"]
+}
