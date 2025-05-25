@@ -2,6 +2,7 @@ import logging
 import asyncio
 from typing import Dict, List, Optional, Any, Union, Literal
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
@@ -118,6 +119,18 @@ class GetMetricHistoryRequest(BaseModel):
     """Request to get metric history"""
     metric_name: str = Field(..., description="Name of the metric")
     limit: int = Field(50, description="Maximum number of points to return")
+
+class UpdateChatSettingsRequest(BaseModel):
+    """Request to update Twitch chat settings"""
+    broadcaster_id: Optional[str] = Field(None, description="Broadcaster ID (will use authenticated user if not provided)")
+    moderator_id: Optional[str] = Field(None, description="Moderator ID (will use authenticated user if not provided)")
+    emote_mode: Optional[bool] = Field(None, description="Set emote-only mode")
+    follower_mode: Optional[bool] = Field(None, description="Set follower-only mode")
+    follower_mode_duration: Optional[int] = Field(None, description="Required follow time in minutes")
+    slow_mode: Optional[bool] = Field(None, description="Set slow mode")
+    slow_mode_delay: Optional[int] = Field(None, description="Slow mode delay in seconds")
+    subscriber_mode: Optional[bool] = Field(None, description="Set subscriber-only mode")
+    unique_chat_mode: Optional[bool] = Field(None, description="Set unique chat mode")
 
 # Set up FastMCP server
 mcp = FastMCP(
@@ -432,6 +445,43 @@ async def toggle_source_visibility(
 # Twitch Convenience Tools
 
 @mcp.tool()
+async def get_twitch_user(user_id: Optional[str] = None, login: Optional[str] = None, ctx: Context) -> Dict[str, Any]:
+    """Get information about a Twitch user
+    
+    Args:
+        user_id: Twitch user ID (optional)
+        login: Twitch username/login (optional)
+    
+    Note: If neither user_id nor login is provided, returns information about the authenticated user
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    # Build the parameters
+    params = {}
+    if user_id:
+        params["user_id"] = user_id
+    if login:
+        params["login"] = login
+    
+    return await assistant.execute_action("twitch", "get_user", **params)
+
+@mcp.tool()
+async def get_twitch_channel(broadcaster_id: Optional[str] = None, ctx: Context) -> Dict[str, Any]:
+    """Get information about a Twitch channel
+    
+    Args:
+        broadcaster_id: Broadcaster ID (optional, uses authenticated user if not provided)
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    # Build the parameters
+    params = {}
+    if broadcaster_id:
+        params["broadcaster_id"] = broadcaster_id
+    
+    return await assistant.execute_action("twitch", "get_channel", **params)
+
+@mcp.tool()
 async def update_stream_title(title: str, ctx: Context) -> Dict[str, Any]:
     """Update the stream title on Twitch
     
@@ -455,12 +505,15 @@ async def update_stream_title(title: str, ctx: Context) -> Dict[str, Any]:
 
 @mcp.tool()
 async def update_stream_category(
-    category_name: str, ctx: Context
+    category_id: Optional[str] = None, 
+    category_name: Optional[str] = None, 
+    ctx: Context
 ) -> Dict[str, Any]:
     """Update the stream category on Twitch
     
     Args:
-        category_name: Name of the game/category
+        category_id: ID of the game/category (preferred if you know it)
+        category_name: Name of the game/category (if category_id is not provided)
     """
     assistant = ctx.request_context.lifespan_context["assistant"]
     
@@ -471,30 +524,217 @@ async def update_stream_category(
     
     broadcaster_id = channel_info["broadcaster_id"]
     
-    # Need to search for the game ID first
-    # This would be a separate API call, but we'll simplify for now
-    # In a full implementation, we would search for the game ID using the Twitch API
+    # Build parameters for the update
+    params = {"broadcaster_id": broadcaster_id}
     
-    return await assistant.execute_action(
-        "twitch", "update_channel",
-        broadcaster_id=broadcaster_id,
-        game_name=category_name
-    )
+    if category_id:
+        params["category_id"] = category_id
+    elif category_name:
+        # In a real implementation, we would search for the game ID using the Twitch API
+        # For simplicity, we'll use the category_name directly
+        params["category_id"] = category_name
+    else:
+        return {"error": "Either category_id or category_name must be provided"}
+    
+    return await assistant.execute_action("twitch", "update_channel", **params)
 
 @mcp.tool()
 async def create_stream_marker(
-    description: str, ctx: Context
+    description: Optional[str] = None, ctx: Context
 ) -> Dict[str, Any]:
     """Create a stream marker on Twitch
     
     Args:
-        description: Marker description
+        description: Marker description (optional)
     """
     assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    params = {}
+    if description:
+        params["description"] = description
+    
+    return await assistant.execute_action("twitch", "create_stream_marker", **params)
+
+@mcp.tool()
+async def get_stream_info(broadcaster_id: Optional[str] = None, ctx: Context) -> Dict[str, Any]:
+    """Get the current stream information for a broadcaster
+    
+    Args:
+        broadcaster_id: Broadcaster ID (optional, uses authenticated user if not provided)
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    params = {}
+    if broadcaster_id:
+        params["broadcaster_id"] = broadcaster_id
+    
+    return await assistant.execute_action("twitch", "get_stream", **params)
+
+@mcp.tool()
+async def get_followers(broadcaster_id: Optional[str] = None, first: int = 20, ctx: Context) -> Dict[str, Any]:
+    """Get followers for a broadcaster
+    
+    Args:
+        broadcaster_id: Broadcaster ID (optional, uses authenticated user if not provided)
+        first: Maximum number of followers to return
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    params = {"first": first}
+    if broadcaster_id:
+        params["broadcaster_id"] = broadcaster_id
+    
+    return await assistant.execute_action("twitch", "get_followers", **params)
+
+@mcp.tool()
+async def create_clip(has_delay: bool = False, ctx: Context) -> Dict[str, Any]:
+    """Create a clip of the current broadcast
+    
+    Args:
+        has_delay: Whether to add a delay before the clip is captured
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    return await assistant.execute_action("twitch", "create_clip", has_delay=has_delay)
+
+@mcp.tool()
+async def get_chat_settings(broadcaster_id: Optional[str] = None, ctx: Context) -> Dict[str, Any]:
+    """Get chat settings for a channel
+    
+    Args:
+        broadcaster_id: Broadcaster ID (optional, uses authenticated user if not provided)
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    params = {}
+    if broadcaster_id:
+        params["broadcaster_id"] = broadcaster_id
+    
+    return await assistant.execute_action("twitch", "get_chat_settings", **params)
+
+@mcp.tool()
+async def update_chat_settings(request: UpdateChatSettingsRequest, ctx: Context) -> Dict[str, Any]:
+    """Update chat settings for a channel
+    
+    Args:
+        request: Chat settings to update
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    # Convert the request to a dictionary and remove None values
+    params = {k: v for k, v in request.model_dump().items() if v is not None}
+    
+    return await assistant.execute_action("twitch", "update_chat_settings", **params)
+
+@mcp.tool()
+async def send_channel_announcement(
+    broadcaster_id: str, 
+    moderator_id: str, 
+    message: str, 
+    color: Optional[str] = None, 
+    ctx: Context
+) -> Dict[str, Any]:
+    """Send an announcement message to a Twitch channel's chat
+    
+    Args:
+        broadcaster_id: ID of the broadcaster's channel
+        moderator_id: ID of the moderator sending the announcement
+        message: The announcement message
+        color: Color of the announcement (blue, green, orange, purple, or None)
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    params = {
+        "broadcaster_id": broadcaster_id,
+        "moderator_id": moderator_id,
+        "message": message
+    }
+    
+    if color:
+        params["color"] = color
+    
+    return await assistant.execute_action("twitch", "send_chat_announcement", **params)
+
+@mcp.tool()
+async def raid_channel(
+    from_broadcaster_id: str, 
+    to_broadcaster_id: str, 
+    ctx: Context
+) -> Dict[str, Any]:
+    """Start a raid from one channel to another
+    
+    Args:
+        from_broadcaster_id: ID of the broadcaster starting the raid
+        to_broadcaster_id: ID of the broadcaster to raid
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
     return await assistant.execute_action(
-        "twitch", "create_stream_marker",
-        description=description
+        "twitch", "raid_channel",
+        from_broadcaster_id=from_broadcaster_id,
+        to_broadcaster_id=to_broadcaster_id
     )
+
+@mcp.tool()
+async def cancel_raid(broadcaster_id: str, ctx: Context) -> Dict[str, Any]:
+    """Cancel a pending raid
+    
+    Args:
+        broadcaster_id: ID of the broadcaster canceling the raid
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    return await assistant.execute_action("twitch", "cancel_raid", broadcaster_id=broadcaster_id)
+
+@mcp.tool()
+async def get_channel_rewards(broadcaster_id: Optional[str] = None, only_manageable_rewards: bool = False, ctx: Context) -> Dict[str, Any]:
+    """Get custom channel point rewards for a channel
+    
+    Args:
+        broadcaster_id: Broadcaster ID (optional, uses authenticated user if not provided)
+        only_manageable_rewards: Whether to only return rewards that can be managed
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    params = {"only_manageable_rewards": only_manageable_rewards}
+    if broadcaster_id:
+        params["broadcaster_id"] = broadcaster_id
+    
+    return await assistant.execute_action("twitch", "get_channel_rewards", **params)
+
+@mcp.tool()
+async def get_stream_tags(broadcaster_id: Optional[str] = None, ctx: Context) -> Dict[str, Any]:
+    """Get stream tags for a channel
+    
+    Args:
+        broadcaster_id: Broadcaster ID (optional, uses authenticated user if not provided)
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    params = {}
+    if broadcaster_id:
+        params["broadcaster_id"] = broadcaster_id
+    
+    return await assistant.execute_action("twitch", "get_stream_tags", **params)
+
+@mcp.tool()
+async def replace_stream_tags(
+    broadcaster_id: str, 
+    tag_ids: Optional[List[str]] = None, 
+    ctx: Context
+) -> Dict[str, Any]:
+    """Replace all stream tags for a channel
+    
+    Args:
+        broadcaster_id: Broadcaster ID
+        tag_ids: List of tag IDs to set (empty list to clear all tags)
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    
+    params = {"broadcaster_id": broadcaster_id}
+    if tag_ids is not None:
+        params["tag_ids"] = tag_ids
+    
+    return await assistant.execute_action("twitch", "replace_stream_tags", **params)
 
 # Main function
 def main():

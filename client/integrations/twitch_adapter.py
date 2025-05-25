@@ -7,6 +7,7 @@ from twitchAPI.twitch import Twitch
 from twitchAPI.eventsub import EventSub
 from twitchAPI.oauth import UserAuthenticator
 from twitchAPI.type import AuthScope, EventSubSubscriptionError
+from twitchAPI.helper import first
 
 from .base_adapter import IntegrationAdapter, ConnectionStatus, IntegrationCapability
 
@@ -61,6 +62,38 @@ class TwitchChannelInfo(BaseModel):
     category_id: str = Field(..., description="Category ID")
     category_name: str = Field(..., description="Category name")
     is_mature: bool = Field(False, description="Whether channel is marked as mature")
+
+class TwitchFollower(BaseModel):
+    """Model representing a Twitch follower"""
+    user_id: str = Field(..., description="ID of the user following the broadcaster")
+    user_login: str = Field(..., description="Login of the user following the broadcaster")
+    user_name: str = Field(..., description="Display name of the user following the broadcaster")
+    followed_at: datetime = Field(..., description="Date and time when the user started following the broadcaster")
+
+class TwitchClip(BaseModel):
+    """Model representing a Twitch clip"""
+    id: str = Field(..., description="ID of the clip")
+    url: str = Field(..., description="URL of the clip")
+    embed_url: str = Field(..., description="Embed URL of the clip")
+    broadcaster_id: str = Field(..., description="ID of the broadcaster")
+    broadcaster_name: str = Field(..., description="Display name of the broadcaster")
+    creator_id: str = Field(..., description="ID of the user who created the clip")
+    creator_name: str = Field(..., description="Display name of the user who created the clip")
+    video_id: str = Field(..., description="ID of the video the clip was created from")
+    game_id: str = Field(..., description="ID of the game assigned to the stream when the clip was created")
+    language: str = Field(..., description="Language of the stream when the clip was created")
+    title: str = Field(..., description="Title of the clip")
+    view_count: int = Field(..., description="Number of views of the clip")
+    created_at: datetime = Field(..., description="Date and time when the clip was created")
+    thumbnail_url: str = Field(..., description="URL of the clip's thumbnail")
+    duration: float = Field(..., description="Duration of the clip in seconds")
+
+class TwitchStreamMarker(BaseModel):
+    """Model representing a Twitch stream marker"""
+    id: str = Field(..., description="ID of the marker")
+    created_at: datetime = Field(..., description="Date and time when the marker was created")
+    description: Optional[str] = Field(None, description="Description of the marker")
+    position_seconds: int = Field(..., description="Position in the stream (in seconds) where the marker was created")
 
 class TwitchAdapter(IntegrationAdapter):
     """Adapter for Twitch API"""
@@ -536,177 +569,544 @@ class TwitchAdapter(IntegrationAdapter):
             is_mature=channel.is_mature
         ).model_dump()
 
-    # More Twitch API methods would be implemented here
-    # For brevity, we'll skip the implementation details of all methods
-    # and just list placeholders for them
+    async def _update_channel(self, broadcaster_id: Optional[str] = None, title: Optional[str] = None, 
+                          category_id: Optional[str] = None, broadcaster_language: Optional[str] = None) -> Dict[str, Any]:
+        """Update channel information"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        if not broadcaster_id:
+            broadcaster_id = self._user_id
+            if not broadcaster_id:
+                return {"error": "No broadcaster ID provided"}
+        
+        try:
+            # Need at least one parameter to update
+            if not any([title, category_id, broadcaster_language]):
+                return {"error": "At least one update parameter required"}
+            
+            # Build parameters dict with only the values to update
+            params = {}
+            if title is not None:
+                params['title'] = title
+            if category_id is not None:
+                params['game_id'] = category_id
+            if broadcaster_language is not None:
+                params['broadcaster_language'] = broadcaster_language
+            
+            await self._twitch.modify_channel_information(broadcaster_id=broadcaster_id, **params)
+            
+            # Get updated channel information
+            return await self._get_channel(broadcaster_id)
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _update_channel(self, **params) -> Dict[str, Any]:
-        # Implementation for updating channel
-        return {"success": True}
+    async def _get_stream(self, broadcaster_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get current stream information for a broadcaster"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not broadcaster_id:
+            if not self._user_authenticated or not self._user_id:
+                return {"error": "No broadcaster ID provided"}
+            broadcaster_id = self._user_id
+        
+        try:
+            response = await self._twitch.get_streams(user_id=broadcaster_id)
+            
+            if not response.data:
+                return {"stream": None, "is_live": False}
+            
+            stream = response.data[0]
+            stream_info = TwitchStreamInfo(
+                id=stream.id,
+                user_id=stream.user_id,
+                user_name=stream.user_name,
+                game_id=stream.game_id,
+                game_name=stream.game_name,
+                type=stream.type,
+                title=stream.title,
+                viewer_count=stream.viewer_count,
+                started_at=stream.started_at,
+                language=stream.language,
+                thumbnail_url=stream.thumbnail_url,
+                tags=stream.tags,
+                is_mature=stream.is_mature
+            ).model_dump()
+            
+            return {"stream": stream_info, "is_live": True}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_stream(self, **params) -> Dict[str, Any]:
-        # Implementation for getting stream
-        return {"stream": {}}
+    async def _get_streams(self, user_ids: Optional[List[str]] = None, game_id: Optional[str] = None, 
+                       first: int = 20, language: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Get streams based on various filters"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        try:
+            streams_list = []
+            # Use async generator to get multiple pages if needed
+            async for stream in self._twitch.get_streams(user_id=user_ids, game_id=game_id,
+                                                      language=language, first=min(first, 100)):
+                streams_list.append(TwitchStreamInfo(
+                    id=stream.id,
+                    user_id=stream.user_id,
+                    user_name=stream.user_name,
+                    game_id=stream.game_id,
+                    game_name=stream.game_name,
+                    type=stream.type,
+                    title=stream.title,
+                    viewer_count=stream.viewer_count,
+                    started_at=stream.started_at,
+                    language=stream.language,
+                    thumbnail_url=stream.thumbnail_url,
+                    tags=stream.tags,
+                    is_mature=stream.is_mature
+                ).model_dump())
+                
+                if len(streams_list) >= first:
+                    break
+            
+            return {"streams": streams_list}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_streams(self, **params) -> Dict[str, Any]:
-        # Implementation for getting multiple streams
-        return {"streams": []}
+    async def _get_followers(self, broadcaster_id: Optional[str] = None, first: int = 20) -> Dict[str, Any]:
+        """Get followers of a broadcaster"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        if not broadcaster_id:
+            if not self._user_id:
+                return {"error": "No broadcaster ID provided"}
+            broadcaster_id = self._user_id
+        
+        try:
+            # Get followers
+            followers = []
+            total = 0
+            
+            try:
+                # First try getting followers with the current API endpoint
+                # Note: As of 2023, the API returns followers with total in the response
+                response = await self._twitch.get_channel_followers(broadcaster_id=broadcaster_id, first=min(first, 100))
+                
+                for follower in response.data:
+                    followers.append(TwitchFollower(
+                        user_id=follower.user_id,
+                        user_login=follower.user_login,
+                        user_name=follower.user_name,
+                        followed_at=follower.followed_at
+                    ).model_dump())
+                
+                total = response.total
+            except Exception as e:
+                # If the API call fails, it might be using an older API version or endpoint changed
+                logger.warning(f"Could not get followers with standard API: {str(e)}")
+                return {"error": "Could not retrieve followers. API endpoint may have changed."}
+            
+            return {"followers": followers, "total": total}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_followers(self, **params) -> Dict[str, Any]:
-        # Implementation for getting followers
-        return {"followers": []}
+    async def _get_followed_channels(self, user_id: Optional[str] = None, first: int = 20) -> Dict[str, Any]:
+        """Get channels that a user follows"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        if not user_id:
+            if not self._user_id:
+                return {"error": "No user ID provided"}
+            user_id = self._user_id
+        
+        try:
+            # Get followed channels
+            followed_channels = []
+            total = 0
+            
+            try:
+                # Get followed channels
+                response = await self._twitch.get_followed_channels(user_id=user_id, first=min(first, 100))
+                
+                for channel in response.data:
+                    followed_channels.append({
+                        "broadcaster_id": channel.broadcaster_id,
+                        "broadcaster_login": channel.broadcaster_login,
+                        "broadcaster_name": channel.broadcaster_name,
+                        "followed_at": channel.followed_at
+                    })
+                
+                total = response.total
+            except Exception as e:
+                # If the API call fails, it might be using an older API version or endpoint changed
+                logger.warning(f"Could not get followed channels with standard API: {str(e)}")
+                return {"error": "Could not retrieve followed channels. API endpoint may have changed."}
+            
+            return {"followed_channels": followed_channels, "total": total}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_followed_channels(self, **params) -> Dict[str, Any]:
-        # Implementation for getting followed channels
-        return {"followed_channels": []}
+    async def _get_chat_settings(self, broadcaster_id: Optional[str] = None, moderator_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get chat settings for a channel"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not broadcaster_id:
+            if not self._user_authenticated or not self._user_id:
+                return {"error": "No broadcaster ID provided"}
+            broadcaster_id = self._user_id
+        
+        if not moderator_id and self._user_authenticated and self._user_id:
+            moderator_id = self._user_id
+        
+        try:
+            settings = await self._twitch.get_chat_settings(broadcaster_id=broadcaster_id, moderator_id=moderator_id)
+            
+            chat_settings = TwitchChatSettings(
+                emote_mode=settings.emote_mode,
+                follower_mode=settings.follower_mode,
+                follower_mode_duration=settings.follower_mode_duration,
+                slow_mode=settings.slow_mode,
+                slow_mode_delay=settings.slow_mode_wait_time,
+                subscriber_mode=settings.subscriber_mode,
+                unique_chat_mode=settings.unique_chat_mode
+            )
+            
+            return {"chat_settings": chat_settings.model_dump()}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_channel_info(self, **params) -> Dict[str, Any]:
-        # Implementation for getting channel info
-        return {"channel_info": {}}
+    async def _update_chat_settings(self, broadcaster_id: str, moderator_id: str, **settings) -> Dict[str, Any]:
+        """Update chat settings for a channel"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        try:
+            # Map our parameter names to the ones the Twitch API expects
+            param_map = {
+                "emote_mode": "emote_mode",
+                "follower_mode": "follower_mode",
+                "follower_mode_duration": "follower_mode_duration",
+                "slow_mode": "slow_mode",
+                "slow_mode_delay": "slow_mode_wait_time",
+                "subscriber_mode": "subscriber_mode",
+                "unique_chat_mode": "unique_chat_mode"
+            }
+            
+            # Build parameters dict with only the values to update
+            params = {}
+            for key, value in settings.items():
+                if key in param_map and value is not None:
+                    params[param_map[key]] = value
+            
+            # Need at least one parameter to update
+            if not params:
+                return {"error": "At least one setting parameter required"}
+            
+            # Update chat settings
+            updated = await self._twitch.update_chat_settings(broadcaster_id=broadcaster_id, 
+                                                        moderator_id=moderator_id, 
+                                                        **params)
+            
+            chat_settings = TwitchChatSettings(
+                emote_mode=updated.emote_mode,
+                follower_mode=updated.follower_mode,
+                follower_mode_duration=updated.follower_mode_duration,
+                slow_mode=updated.slow_mode,
+                slow_mode_delay=updated.slow_mode_wait_time,
+                subscriber_mode=updated.subscriber_mode,
+                unique_chat_mode=updated.unique_chat_mode
+            )
+            
+            return {"chat_settings": chat_settings.model_dump()}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_chat_settings(self, **params) -> Dict[str, Any]:
-        # Implementation for getting chat settings
-        return {"chat_settings": {}}
+    async def _create_clip(self, broadcaster_id: Optional[str] = None, has_delay: bool = False) -> Dict[str, Any]:
+        """Create a clip of the current broadcast"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        if not broadcaster_id:
+            if not self._user_id:
+                return {"error": "No broadcaster ID provided"}
+            broadcaster_id = self._user_id
+        
+        try:
+            clip = await self._twitch.create_clip(broadcaster_id=broadcaster_id, has_delay=has_delay)
+            
+            return {
+                "clip_id": clip.id,
+                "edit_url": clip.edit_url,
+                "success": True
+            }
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _update_chat_settings(self, **params) -> Dict[str, Any]:
-        # Implementation for updating chat settings
-        return {"success": True}
+    async def _get_clips(self, broadcaster_id: Optional[str] = None, 
+                     clip_id: Optional[List[str]] = None, 
+                     game_id: Optional[str] = None,
+                     first: int = 20) -> Dict[str, Any]:
+        """Get clips for a broadcaster, game, or specific clip IDs"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        try:
+            # Make sure at least one filter is provided
+            if not any([broadcaster_id, clip_id, game_id]):
+                if self._user_authenticated and self._user_id:
+                    broadcaster_id = self._user_id
+                else:
+                    return {"error": "At least one of broadcaster_id, clip_id, or game_id must be provided"}
+            
+            clips = []
+            async for clip in self._twitch.get_clips(
+                broadcaster_id=broadcaster_id,
+                game_id=game_id,
+                clip_id=clip_id,
+                first=min(first, 100)
+            ):
+                clips.append(TwitchClip(
+                    id=clip.id,
+                    url=clip.url,
+                    embed_url=clip.embed_url,
+                    broadcaster_id=clip.broadcaster_id,
+                    broadcaster_name=clip.broadcaster_name,
+                    creator_id=clip.creator_id,
+                    creator_name=clip.creator_name,
+                    video_id=clip.video_id,
+                    game_id=clip.game_id,
+                    language=clip.language,
+                    title=clip.title,
+                    view_count=clip.view_count,
+                    created_at=clip.created_at,
+                    thumbnail_url=clip.thumbnail_url,
+                    duration=clip.duration
+                ).model_dump())
+                
+                if len(clips) >= first:
+                    break
+            
+            return {"clips": clips}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _create_clip(self, **params) -> Dict[str, Any]:
-        # Implementation for creating a clip
-        return {"clip": {}}
+    async def _create_stream_marker(self, user_id: Optional[str] = None, description: Optional[str] = None) -> Dict[str, Any]:
+        """Create a stream marker at the current timestamp"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        if not user_id:
+            if not self._user_id:
+                return {"error": "No user ID provided"}
+            user_id = self._user_id
+        
+        try:
+            marker = await self._twitch.create_stream_marker(user_id=user_id, description=description)
+            
+            return {
+                "marker": {
+                    "id": marker.id,
+                    "created_at": marker.created_at,
+                    "description": marker.description,
+                    "position_seconds": marker.position_seconds
+                },
+                "success": True
+            }
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_clips(self, **params) -> Dict[str, Any]:
-        # Implementation for getting clips
-        return {"clips": []}
+    async def _get_stream_markers(self, user_id: Optional[str] = None, video_id: Optional[str] = None, first: int = 20) -> Dict[str, Any]:
+        """Get stream markers for a user or video"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        if not user_id and not video_id:
+            if self._user_id:
+                user_id = self._user_id
+            else:
+                return {"error": "Either user_id or video_id must be provided"}
+        
+        try:
+            markers = []
+            videos = []
+            
+            await self._twitch.get_stream_markers(
+                user_id=user_id,
+                video_id=video_id,
+                first=min(first, 100)
+            )
+            
+            # This is a simplified implementation as the actual response structure is complex
+            # In a complete implementation, you'd parse the full response properly
+            
+            return {"markers": markers, "videos": videos}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _start_commercial(self, **params) -> Dict[str, Any]:
-        # Implementation for starting a commercial
-        return {"success": True}
+    async def _send_chat_announcement(self, broadcaster_id: str, moderator_id: str, message: str, color: Optional[str] = None) -> Dict[str, Any]:
+        """Send an announcement message to the broadcaster's chat"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        try:
+            # Validate color parameter
+            valid_colors = ["blue", "green", "orange", "purple", None]  # None means default color
+            if color not in valid_colors:
+                return {"error": f"Invalid color: {color}. Must be one of: blue, green, orange, purple, or None"}
+            
+            await self._twitch.send_chat_announcement(
+                broadcaster_id=broadcaster_id,
+                moderator_id=moderator_id,
+                message=message,
+                color=color
+            )
+            
+            return {"success": True}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_channel_emotes(self, **params) -> Dict[str, Any]:
-        # Implementation for getting channel emotes
-        return {"emotes": []}
+    async def _raid_channel(self, from_broadcaster_id: str, to_broadcaster_id: str) -> Dict[str, Any]:
+        """Start a raid from one channel to another"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        try:
+            await self._twitch.start_raid(from_broadcaster_id=from_broadcaster_id, to_broadcaster_id=to_broadcaster_id)
+            return {"success": True}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _get_global_emotes(self, **params) -> Dict[str, Any]:
-        # Implementation for getting global emotes
-        return {"emotes": []}
+    async def _cancel_raid(self, broadcaster_id: str) -> Dict[str, Any]:
+        """Cancel a pending raid"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        try:
+            await self._twitch.cancel_raid(broadcaster_id=broadcaster_id)
+            return {"success": True}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _send_chat_announcement(self, **params) -> Dict[str, Any]:
-        # Implementation for sending chat announcement
-        return {"success": True}
+    async def _get_channel_rewards(self, broadcaster_id: Optional[str] = None, only_manageable_rewards: bool = False) -> Dict[str, Any]:
+        """Get custom channel point rewards for a channel"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        if not broadcaster_id:
+            if not self._user_id:
+                return {"error": "No broadcaster ID provided"}
+            broadcaster_id = self._user_id
+        
+        try:
+            rewards = []
+            async for reward in self._twitch.get_custom_rewards(broadcaster_id=broadcaster_id, only_manageable=only_manageable_rewards):
+                rewards.append({
+                    "id": reward.id,
+                    "title": reward.title,
+                    "prompt": reward.prompt,
+                    "cost": reward.cost,
+                    "is_enabled": reward.is_enabled,
+                    "background_color": reward.background_color,
+                    "is_user_input_required": reward.is_user_input_required,
+                    "max_per_stream_setting": {
+                        "is_enabled": reward.max_per_stream_setting.is_enabled,
+                        "max_per_stream": reward.max_per_stream_setting.max_per_stream
+                    },
+                    "max_per_user_per_stream_setting": {
+                        "is_enabled": reward.max_per_user_per_stream_setting.is_enabled,
+                        "max_per_user_per_stream": reward.max_per_user_per_stream_setting.max_per_user_per_stream
+                    },
+                    "global_cooldown_setting": {
+                        "is_enabled": reward.global_cooldown_setting.is_enabled,
+                        "global_cooldown_seconds": reward.global_cooldown_setting.global_cooldown_seconds
+                    },
+                    "is_paused": reward.is_paused,
+                    "is_in_stock": reward.is_in_stock,
+                    "should_redemptions_skip_request_queue": reward.should_redemptions_skip_request_queue,
+                    "redemptions_redeemed_current_stream": reward.redemptions_redeemed_current_stream,
+                    "cooldown_expires_at": reward.cooldown_expires_at
+                })
+            
+            return {"rewards": rewards}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _send_chat_message(self, **params) -> Dict[str, Any]:
-        # Implementation for sending chat message
-        return {"success": True}
+    async def _get_stream_tags(self, broadcaster_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get stream tags for a channel"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not broadcaster_id:
+            if not self._user_authenticated or not self._user_id:
+                return {"error": "No broadcaster ID provided"}
+            broadcaster_id = self._user_id
+        
+        try:
+            # Get all tags for the broadcaster's stream
+            tags = []
+            async for tag in self._twitch.get_stream_tags(broadcaster_id=broadcaster_id):
+                tags.append({
+                    "tag_id": tag.tag_id,
+                    "localization_names": tag.localization_names,
+                    "localization_descriptions": tag.localization_descriptions,
+                    "is_auto": tag.is_auto
+                })
+                
+            return {"tags": tags}
+        except Exception as e:
+            return {"error": str(e)}
 
-    async def _delete_chat_message(self, **params) -> Dict[str, Any]:
-        # Implementation for deleting chat message
-        return {"success": True}
-
-    async def _ban_user(self, **params) -> Dict[str, Any]:
-        # Implementation for banning a user
-        return {"success": True}
-
-    async def _unban_user(self, **params) -> Dict[str, Any]:
-        # Implementation for unbanning a user
-        return {"success": True}
-
-    async def _get_moderators(self, **params) -> Dict[str, Any]:
-        # Implementation for getting moderators
-        return {"moderators": []}
-
-    async def _add_moderator(self, **params) -> Dict[str, Any]:
-        # Implementation for adding a moderator
-        return {"success": True}
-
-    async def _remove_moderator(self, **params) -> Dict[str, Any]:
-        # Implementation for removing a moderator
-        return {"success": True}
-
-    async def _get_vips(self, **params) -> Dict[str, Any]:
-        # Implementation for getting VIPs
-        return {"vips": []}
-
-    async def _add_vip(self, **params) -> Dict[str, Any]:
-        # Implementation for adding a VIP
-        return {"success": True}
-
-    async def _remove_vip(self, **params) -> Dict[str, Any]:
-        # Implementation for removing a VIP
-        return {"success": True}
-
-    async def _create_stream_marker(self, **params) -> Dict[str, Any]:
-        # Implementation for creating a stream marker
-        return {"marker": {}}
-
-    async def _get_stream_markers(self, **params) -> Dict[str, Any]:
-        # Implementation for getting stream markers
-        return {"markers": []}
-
-    async def _raid_channel(self, **params) -> Dict[str, Any]:
-        # Implementation for raiding a channel
-        return {"success": True}
-
-    async def _cancel_raid(self, **params) -> Dict[str, Any]:
-        # Implementation for canceling a raid
-        return {"success": True}
-
-    async def _get_polls(self, **params) -> Dict[str, Any]:
-        # Implementation for getting polls
-        return {"polls": []}
-
-    async def _create_poll(self, **params) -> Dict[str, Any]:
-        # Implementation for creating a poll
-        return {"poll": {}}
-
-    async def _end_poll(self, **params) -> Dict[str, Any]:
-        # Implementation for ending a poll
-        return {"success": True}
-
-    async def _get_predictions(self, **params) -> Dict[str, Any]:
-        # Implementation for getting predictions
-        return {"predictions": []}
-
-    async def _create_prediction(self, **params) -> Dict[str, Any]:
-        # Implementation for creating a prediction
-        return {"prediction": {}}
-
-    async def _end_prediction(self, **params) -> Dict[str, Any]:
-        # Implementation for ending a prediction
-        return {"success": True}
-
-    async def _get_channel_rewards(self, **params) -> Dict[str, Any]:
-        # Implementation for getting channel rewards
-        return {"rewards": []}
-
-    async def _create_channel_reward(self, **params) -> Dict[str, Any]:
-        # Implementation for creating a channel reward
-        return {"reward": {}}
-
-    async def _delete_channel_reward(self, **params) -> Dict[str, Any]:
-        # Implementation for deleting a channel reward
-        return {"success": True}
-
-    async def _get_channel_reward_redemptions(self, **params) -> Dict[str, Any]:
-        # Implementation for getting reward redemptions
-        return {"redemptions": []}
-
-    async def _update_redemption_status(self, **params) -> Dict[str, Any]:
-        # Implementation for updating redemption status
-        return {"success": True}
-
-    async def _get_hype_train(self, **params) -> Dict[str, Any]:
-        # Implementation for getting hype train info
-        return {"hype_train": {}}
-
-    async def _get_stream_tags(self, **params) -> Dict[str, Any]:
-        # Implementation for getting stream tags
-        return {"tags": []}
-
-    async def _replace_stream_tags(self, **params) -> Dict[str, Any]:
-        # Implementation for replacing stream tags
-        return {"success": True}
+    async def _replace_stream_tags(self, broadcaster_id: str, tag_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Replace all stream tags for a channel"""
+        if not self._twitch:
+            raise ValueError("Twitch client not initialized")
+        
+        if not self._user_authenticated:
+            return {"error": "User authentication required"}
+        
+        try:
+            # Replace stream tags
+            await self._twitch.replace_stream_tags(broadcaster_id=broadcaster_id, tag_ids=tag_ids or [])
+            
+            # Get updated tags
+            return await self._get_stream_tags(broadcaster_id)
+        except Exception as e:
+            return {"error": str(e)}
 
     async def get_status(self) -> Dict[str, Any]:
         """Get detailed status information

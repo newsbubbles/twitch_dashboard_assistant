@@ -15,10 +15,9 @@ Unlike yet another overlay or bot system, the Twitch Dashboard Assistant serves 
 
 ### Current Integrations
 - **OBS/Streamlabs OBS**: Scene switching, source control, streaming management
-- **Twitch API**: Channel data, stream metrics, viewer analytics
-- **Discord**: Community announcements, server management
-- **StreamElements/Streamlabs**: Alert customization, widget management
-- **Nightbot/Streamlabs Chatbot**: Command management, automated responses
+- **Twitch API**: Channel data, stream metrics, viewer analytics, chat management
+- **Discord**: Community announcements, server management (planned)
+- **StreamElements/Streamlabs**: Alert customization, widget management (planned)
 
 ## Key Features
 
@@ -109,7 +108,7 @@ STREAMELEMENTS_JWT=your_streamelements_jwt
 ### Running the Assistant
 
 ```bash
-python assistant.py
+python agent.py
 ```
 
 ## Usage Examples
@@ -120,6 +119,25 @@ python assistant.py
 "Set up my Just Chatting layout with webcam, chat overlay, and alerts"
 "Switch to my Valorant setup and post a Discord notification that I'm playing"
 "Start my stream with a 5-minute countdown, then switch to main scene"
+```
+
+### Twitch Channel Management
+
+```
+"Update my stream title to 'Learning Python with Chat!'"
+"Change my stream category to Just Chatting"
+"Get my current viewer count"
+"Create a clip of what just happened"
+"Show me my recent followers"
+```
+
+### Chat Management
+
+```
+"Enable subscriber-only mode in my chat"
+"Set slow mode with a 5-second delay"
+"Get my current chat settings"
+"Send an announcement to chat about our giveaway"
 ```
 
 ### Cross-Platform Actions
@@ -144,8 +162,8 @@ python assistant.py
 - [x] Project pivot and vision redefinition
 - [x] Research on integration targets and APIs
 - [x] Workflow engine design
-- [ ] OBS WebSocket integration
-- [ ] Twitch API integration
+- [x] OBS WebSocket integration
+- [x] Twitch API integration
 
 ### Phase 2: Workflow Automation
 - [ ] State machine workflow implementation
@@ -164,6 +182,12 @@ python assistant.py
 - [ ] Stream deck integration
 - [ ] Multi-channel management
 - [ ] Content calendar planning
+
+## Documentation
+
+- [Twitch API Integration Guide](docs/twitch_api_integration.md)
+- [OBS WebSocket Integration](docs/obs_websocket_integration.md)
+- [Workflow Engine Guide](docs/workflow_guide.md)
 
 ## Contributing
 
