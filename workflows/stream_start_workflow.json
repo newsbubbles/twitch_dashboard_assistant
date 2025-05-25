@@ -1,0 +1,94 @@
+{
+  "id": "stream_start",
+  "name": "Stream Start Sequence",
+  "description": "Automated sequence for starting a stream",
+  "initial_state": "switch_to_starting_scene",
+  "states": [
+    {
+      "name": "switch_to_starting_scene",
+      "description": "Switch to the 'Starting Soon' scene",
+      "action": {
+        "service": "obs",
+        "method": "set_current_scene",
+        "params": {
+          "scene_name": "Starting Soon"
+        }
+      },
+      "transitions": {
+        "success": "update_stream_info",
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "update_stream_info",
+      "description": "Update Twitch stream title and category",
+      "action": {
+        "service": "twitch",
+        "method": "update_channel",
+        "params": {
+          "title": "${stream_title}",
+          "game_name": "${stream_category}"
+        }
+      },
+      "transitions": {
+        "success": "wait_for_viewers",
+        "error": "wait_for_viewers"  // Continue even if update fails
+      }
+    },
+    {
+      "name": "wait_for_viewers",
+      "description": "Wait for viewers to join",
+      "action": {
+        "service": "internal",
+        "method": "wait",
+        "params": {
+          "seconds": 300
+        }
+      },
+      "transitions": {
+        "success": "start_streaming"
+      }
+    },
+    {
+      "name": "start_streaming",
+      "description": "Start the OBS stream",
+      "action": {
+        "service": "obs",
+        "method": "start_streaming",
+        "params": {}
+      },
+      "transitions": {
+        "success": "switch_to_main_scene",
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "switch_to_main_scene",
+      "description": "Switch to the main stream scene",
+      "action": {
+        "service": "obs",
+        "method": "set_current_scene",
+        "params": {
+          "scene_name": "Main"
+        }
+      },
+      "transitions": {}
+    },
+    {
+      "name": "handle_error",
+      "description": "Handle any errors during the sequence",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Error in stream start workflow",
+          "level": "error"
+        }
+      },
+      "transitions": {}
+    }
+  ],
+  "triggers": ["manual", "scheduled.stream_start"],
+  "version": "1.0",
+  "tags": ["stream", "automation"]
+}

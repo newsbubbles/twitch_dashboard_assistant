@@ -1,0 +1,93 @@
+{
+  "id": "stream_end",
+  "name": "Stream End Sequence",
+  "description": "Automated sequence for ending a stream",
+  "initial_state": "switch_to_ending_scene",
+  "states": [
+    {
+      "name": "switch_to_ending_scene",
+      "description": "Switch to the 'Ending' scene",
+      "action": {
+        "service": "obs",
+        "method": "set_current_scene",
+        "params": {
+          "scene_name": "Ending"
+        }
+      },
+      "transitions": {
+        "success": "create_stream_marker",
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "create_stream_marker",
+      "description": "Create a marker for the end of content",
+      "action": {
+        "service": "twitch",
+        "method": "create_stream_marker",
+        "params": {
+          "description": "Stream end - ${date} ${time}"
+        }
+      },
+      "transitions": {
+        "success": "wait_for_goodbyes",
+        "error": "wait_for_goodbyes"  // Continue even if marker fails
+      }
+    },
+    {
+      "name": "wait_for_goodbyes",
+      "description": "Wait for streamer to say goodbye",
+      "action": {
+        "service": "internal",
+        "method": "wait",
+        "params": {
+          "seconds": 120
+        }
+      },
+      "transitions": {
+        "success": "stop_streaming"
+      }
+    },
+    {
+      "name": "stop_streaming",
+      "description": "Stop the OBS stream",
+      "action": {
+        "service": "obs",
+        "method": "stop_streaming",
+        "params": {}
+      },
+      "transitions": {
+        "success": "switch_to_offline_scene",
+        "error": "handle_error"
+      }
+    },
+    {
+      "name": "switch_to_offline_scene",
+      "description": "Switch to offline scene for next time",
+      "action": {
+        "service": "obs",
+        "method": "set_current_scene",
+        "params": {
+          "scene_name": "Offline"
+        }
+      },
+      "transitions": {}
+    },
+    {
+      "name": "handle_error",
+      "description": "Handle any errors during the sequence",
+      "action": {
+        "service": "internal",
+        "method": "log",
+        "params": {
+          "message": "Error in stream end workflow",
+          "level": "error"
+        }
+      },
+      "transitions": {}
+    }
+  ],
+  "triggers": ["manual"],
+  "version": "1.0",
+  "tags": ["stream", "automation"]
+}
