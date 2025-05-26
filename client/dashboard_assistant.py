@@ -7,6 +7,8 @@ from datetime import datetime
 from .integration_manager import IntegrationManager
 from .workflow_engine import WorkflowEngine, WorkflowDefinition, WorkflowStatus
 from .context_analyzer import ContextAnalyzer, InsightType, SeverityLevel
+# Import our new workflow execution enhancer
+from .workflow_execution import WorkflowExecutionEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,9 @@ class DashboardAssistant:
         
         # Set up context analyzer
         self.context_analyzer = ContextAnalyzer(self.integration_manager)
+        
+        # Set up workflow execution enhancer
+        self.workflow_executor = WorkflowExecutionEnhancer(self.workflow_engine, self.integration_manager)
         
         # Initialization flag
         self._initialized = False
@@ -215,6 +220,9 @@ class DashboardAssistant:
         )
         
         if execution_id:
+            # Start the workflow execution using our enhanced executor
+            asyncio.create_task(self.execute_workflow(execution_id))
+            
             return {
                 "success": True,
                 "execution_id": execution_id,
@@ -225,6 +233,59 @@ class DashboardAssistant:
                 "success": False,
                 "message": f"Failed to start workflow '{workflow_id}'"
             }
+    
+    async def execute_workflow(self, execution_id: str) -> Dict[str, Any]:
+        """Execute a workflow with the enhanced executor
+        
+        Args:
+            execution_id: Execution ID
+            
+        Returns:
+            Dict[str, Any]: Execution result
+        """
+        return await self.workflow_executor.execute_workflow(execution_id)
+    
+    async def execute_workflow_step(self, execution_id: str) -> Dict[str, Any]:
+        """Execute a single step of a workflow
+        
+        Args:
+            execution_id: Execution ID
+            
+        Returns:
+            Dict[str, Any]: Step execution result
+        """
+        if execution_id not in self.workflow_engine.active_workflows:
+            return {"error": f"Workflow execution '{execution_id}' not found"}
+        
+        context = self.workflow_engine.active_workflows[execution_id]
+        workflow_id = context.workflow_id
+        
+        if workflow_id not in self.workflow_engine.workflow_registry:
+            return {"error": f"Workflow definition '{workflow_id}' not found"}
+        
+        workflow = self.workflow_engine.workflow_registry[workflow_id]
+        
+        # Find the current state
+        current_state_name = context.current_state
+        current_state = next(
+            (s for s in workflow.states if s.name == current_state_name), None
+        )
+        
+        if not current_state:
+            return {"error": f"State '{current_state_name}' not found in workflow"}
+        
+        # Execute just this step
+        from .workflow_execution import WorkflowExecutor
+        result = await WorkflowExecutor.execute_workflow_step(
+            current_state, context, self.integration_manager
+        )
+        
+        return {
+            "execution_id": execution_id,
+            "workflow_id": workflow_id,
+            "state": current_state_name,
+            "result": result
+        }
     
     async def trigger_event(self, event_name: str, event_data: Dict[str, Any] = None) -> Dict[str, Any]:
         """Trigger an event that may start workflows
@@ -238,12 +299,84 @@ class DashboardAssistant:
         """
         execution_ids = await self.workflow_engine.trigger_event(event_name, event_data or {})
         
+        # Execute each triggered workflow
+        for execution_id in execution_ids:
+            asyncio.create_task(self.execute_workflow(execution_id))
+        
         return {
             "success": True,
             "event": event_name,
             "executions": execution_ids,
             "count": len(execution_ids)
         }
+    
+    async def cancel_workflow(self, execution_id: str) -> Dict[str, Any]:
+        """Cancel a running workflow
+        
+        Args:
+            execution_id: Execution ID of the workflow
+            
+        Returns:
+            Dict[str, Any]: Cancellation result
+        """
+        success = await self.workflow_engine.cancel_workflow(execution_id)
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"Workflow execution '{execution_id}' cancelled"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to cancel workflow execution '{execution_id}'"
+            }
+    
+    async def pause_workflow(self, execution_id: str) -> Dict[str, Any]:
+        """Pause a running workflow
+        
+        Args:
+            execution_id: Execution ID of the workflow
+            
+        Returns:
+            Dict[str, Any]: Pause result
+        """
+        success = await self.workflow_engine.pause_workflow(execution_id)
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"Workflow execution '{execution_id}' paused"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to pause workflow execution '{execution_id}'"
+            }
+    
+    async def resume_workflow(self, execution_id: str) -> Dict[str, Any]:
+        """Resume a paused workflow
+        
+        Args:
+            execution_id: Execution ID of the workflow
+            
+        Returns:
+            Dict[str, Any]: Resume result
+        """
+        success = await self.workflow_engine.resume_workflow(execution_id)
+        
+        if success:
+            # Use our enhanced executor to continue execution
+            asyncio.create_task(self.execute_workflow(execution_id))
+            return {
+                "success": True,
+                "message": f"Workflow execution '{execution_id}' resumed"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to resume workflow execution '{execution_id}'"
+            }
     
     def get_workflow_status(self, execution_id: str) -> Optional[Dict[str, Any]]:
         """Get status of a workflow execution

@@ -83,6 +83,45 @@ class TriggerEventResponse(BaseModel):
     executions: List[str] = Field(default_factory=list, description="Started execution IDs")
     count: int = Field(0, description="Number of executions started")
 
+class CancelWorkflowRequest(BaseModel):
+    """Request to cancel a workflow execution"""
+    execution_id: str = Field(..., description="ID of the workflow execution to cancel")
+
+class CancelWorkflowResponse(BaseModel):
+    """Response from cancel_workflow"""
+    success: bool = Field(..., description="Whether the workflow was cancelled successfully")
+    message: Optional[str] = Field(None, description="Additional information or error message")
+
+class PauseWorkflowRequest(BaseModel):
+    """Request to pause a workflow execution"""
+    execution_id: str = Field(..., description="ID of the workflow execution to pause")
+
+class PauseWorkflowResponse(BaseModel):
+    """Response from pause_workflow"""
+    success: bool = Field(..., description="Whether the workflow was paused successfully")
+    message: Optional[str] = Field(None, description="Additional information or error message")
+
+class ResumeWorkflowRequest(BaseModel):
+    """Request to resume a workflow execution"""
+    execution_id: str = Field(..., description="ID of the workflow execution to resume")
+
+class ResumeWorkflowResponse(BaseModel):
+    """Response from resume_workflow"""
+    success: bool = Field(..., description="Whether the workflow was resumed successfully")
+    message: Optional[str] = Field(None, description="Additional information or error message")
+
+class ExecuteWorkflowStepRequest(BaseModel):
+    """Request to execute a single workflow step"""
+    execution_id: str = Field(..., description="ID of the workflow execution")
+
+class ExecuteWorkflowStepResponse(BaseModel):
+    """Response from execute_workflow_step"""
+    success: bool = Field(..., description="Whether the step was executed successfully")
+    execution_id: str = Field(..., description="ID of the workflow execution")
+    state: Optional[str] = Field(None, description="Current workflow state")
+    result: Optional[Dict[str, Any]] = Field(None, description="Execution result")
+    error: Optional[str] = Field(None, description="Error message if execution failed")
+
 class GetInsightsRequest(BaseModel):
     """Request to get insights"""
     insight_type: Optional[str] = Field(None, description="Type of insights to filter by")
@@ -290,6 +329,75 @@ async def start_workflow(request: StartWorkflowRequest, ctx: Context) -> StartWo
     return StartWorkflowResponse(
         success=result.get("success", False),
         execution_id=result.get("execution_id"),
+        message=result.get("message")
+    )
+
+@mcp.tool()
+async def execute_workflow_step(request: ExecuteWorkflowStepRequest, ctx: Context) -> ExecuteWorkflowStepResponse:
+    """Execute a single step of a workflow
+    
+    Args:
+        request: Step execution details
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    result = await assistant.execute_workflow_step(request.execution_id)
+    
+    if "error" in result:
+        return ExecuteWorkflowStepResponse(
+            success=False,
+            execution_id=request.execution_id,
+            error=result["error"]
+        )
+    
+    return ExecuteWorkflowStepResponse(
+        success=True,
+        execution_id=result["execution_id"],
+        state=result["state"],
+        result=result["result"]
+    )
+
+@mcp.tool()
+async def cancel_workflow(request: CancelWorkflowRequest, ctx: Context) -> CancelWorkflowResponse:
+    """Cancel a workflow execution
+    
+    Args:
+        request: Cancel details
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    result = await assistant.cancel_workflow(request.execution_id)
+    
+    return CancelWorkflowResponse(
+        success=result.get("success", False),
+        message=result.get("message")
+    )
+
+@mcp.tool()
+async def pause_workflow(request: PauseWorkflowRequest, ctx: Context) -> PauseWorkflowResponse:
+    """Pause a workflow execution
+    
+    Args:
+        request: Pause details
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    result = await assistant.pause_workflow(request.execution_id)
+    
+    return PauseWorkflowResponse(
+        success=result.get("success", False),
+        message=result.get("message")
+    )
+
+@mcp.tool()
+async def resume_workflow(request: ResumeWorkflowRequest, ctx: Context) -> ResumeWorkflowResponse:
+    """Resume a paused workflow execution
+    
+    Args:
+        request: Resume details
+    """
+    assistant = ctx.request_context.lifespan_context["assistant"]
+    result = await assistant.resume_workflow(request.execution_id)
+    
+    return ResumeWorkflowResponse(
+        success=result.get("success", False),
         message=result.get("message")
     )
 
